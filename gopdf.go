@@ -8,6 +8,7 @@ import (
 	"os"
 	//"container/list"
 	"fmt"
+	"io"
 	"strconv"
 )
 
@@ -125,6 +126,73 @@ func (gp *GoPdf) SetY(y float64) {
 //GetY : get current position y
 func (gp *GoPdf) GetY() float64 {
 	return gp.curr.Y
+}
+
+func (gp *GoPdf) ImageReader(pic io.Reader, picId string, x float64, y float64, rect *Rect) error {
+	//check
+	cacheImageIndex := -1
+	for _, imgcache := range gp.curr.ImgCaches {
+		if picId == imgcache.Path {
+			cacheImageIndex = imgcache.Index
+			break
+		}
+	}
+
+	//create img object
+	imgobj := new(ImageObj)
+	imgobj.init(func() *GoPdf {
+		return gp
+	})
+
+	var err error
+	err = imgobj.SetImage(pic)
+	if err != nil {
+		return err
+	}
+
+	if rect == nil {
+		rect = imgobj.GetRect()
+	}
+
+	if cacheImageIndex == -1 { //new image
+		err := imgobj.parse()
+		if err != nil {
+			return err
+		}
+		index := gp.addObj(imgobj)
+		if gp.indexOfProcSet != -1 {
+			//ยัดรูป
+			procset := gp.pdfObjs[gp.indexOfProcSet].(*ProcSetObj)
+			gp.getContent().AppendStreamImage(gp.curr.CountOfImg, x, y, rect)
+			procset.RealteXobjs = append(procset.RealteXobjs, RealteXobject{IndexOfObj: index})
+			//เก็บข้อมูลรูปเอาไว้
+			var imgcache ImageCache
+			imgcache.Index = gp.curr.CountOfImg
+			imgcache.Path = picId
+			gp.curr.ImgCaches = append(gp.curr.ImgCaches, imgcache)
+			gp.curr.CountOfImg++
+		}
+
+		if imgobj.haveSMask() {
+			smaskObj, err := imgobj.createSMask()
+			if err != nil {
+				return err
+			}
+			imgobj.imginfo.smarkObjID = gp.addObj(smaskObj)
+		}
+
+		if imgobj.isColspaceIndexed() {
+			dRGB, err := imgobj.createDeviceRGB()
+			if err != nil {
+				return err
+			}
+			imgobj.imginfo.deviceRGBObjID = gp.addObj(dRGB)
+		}
+
+	} else { //same img
+		gp.getContent().AppendStreamImage(cacheImageIndex, x, y, rect)
+	}
+	return nil
 }
 
 //Image : draw image
